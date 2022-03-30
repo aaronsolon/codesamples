@@ -30,7 +30,170 @@ public class AnimationBuilder : ScriptableObject
     [Header("Variables for building from spritesheets")]
     [SerializeField] private List <InfoToBuildAnimationsFromSheet> infoToBuildFromSheets = new List<InfoToBuildAnimationsFromSheet>();
 
-    public static int[] spriteSheet1ImageCounts = new int[]
+    private string suffix = ".anim";
+
+    /// <summary>
+    /// This function is called by pressing a button once the files are assigned correctly in the inspector.
+    /// </summary>
+    public void BuildAnimationsFromAnimationSheets()
+    {
+        foreach (InfoToBuildAnimationsFromSheet info in infoToBuildFromSheets)
+        {
+            int[] imageCounts = new int[0];
+            bool[] loopBackBools = new bool[0];
+            float[] timesBetweenFrames = new float[0];
+            string[] fileTitles = new string[0];
+
+            //Assign the arrays based on which sheet we're pulling from
+            switch (info.sheetIdentity)
+            {
+                case SheetIdentity.SHEET1:
+                    imageCounts = AnimationBuilder.spriteSheet1ImageCounts;
+                    loopBackBools = AnimationBuilder.spriteSheet1LoopbackDatas;
+                    timesBetweenFrames = AnimationBuilder.spriteSheet1TimeBetweenFrames;
+                    fileTitles = AnimationBuilder.spriteSheet1AnimationTitles;
+                    break;
+
+                case SheetIdentity.SHEET2:
+                    imageCounts = AnimationBuilder.spriteSheet2ImageCounts;
+                    loopBackBools = AnimationBuilder.spriteSheet2LoopbackDatas;
+                    timesBetweenFrames = AnimationBuilder.spriteSheet2TimeBetweenFrames;
+                    fileTitles = AnimationBuilder.spriteSheet2AnimationTitles;
+                    break;
+            }
+
+            //Attach the file name prefix to the animation names
+            string[] tempFileTitles = new string[fileTitles.Length];
+            for (int s = 0; s < fileTitles.Length; s++)
+            {
+                tempFileTitles[s] = info.animationFilenamePrefix + fileTitles[s];
+            }
+
+            //Check to see if we have the right number of images, and return an error message if we don't
+            int totalImageCheck = 0;
+            foreach (int i in imageCounts)
+            {
+                totalImageCheck += i;
+            }
+            if (totalImageCheck != info.allSpritesFromSpriteSheet.Length)
+            {
+                Debug.LogWarning("The number of sprites entered into AnimationBuilder for " + info.sheetIdentity.ToString() + " does not match its expected value, animations cannot be built.");
+                Debug.LogWarning("The number of images found in the imageCounts variable: " + totalImageCheck.ToString());
+                Debug.LogWarning("The length of the images entered in the inspector: " + info.allSpritesFromSpriteSheet.Length.ToString());
+                return;
+            }
+
+            //set up a variable to count the number of images already used
+            int imagesAlreadyUsed = 0;
+
+            //Loop through each intended animation, and build it using the data we have set up
+            for (int i=0; i< imageCounts.Length; i++)
+            {
+                //initialize the necesarry variables
+                float timeBetweenFrames = timesBetweenFrames[i];
+                string animationName = tempFileTitles[i];
+                bool loopBack = loopBackBools[i];
+                int imageCount = imageCounts[i];
+                Sprite[] imagesForAnimation = new Sprite[imageCount];
+
+                //Assign the sprites
+                int tempIndex = 0;
+                int tempImagesUsed = imagesAlreadyUsed;
+                for (int x = imagesAlreadyUsed; x < (tempImagesUsed + imageCount); x++)
+                {
+                    imagesForAnimation[tempIndex] = info.allSpritesFromSpriteSheet[x];
+                    tempIndex++;
+                    imagesAlreadyUsed++;
+                }
+
+                //Build the animation
+                BuildAnimation(imagesForAnimation, timeBetweenFrames, animationName, saveFilePath, animationLoopsBack: loopBack);
+            }
+        }
+    }
+
+    public void BuildAnimation(Sprite[] imagesForAnimation,float timeBetweenFrames,string animName,string saveFilePath, bool animationLoopsBack = false)
+    {
+        AnimationClip aClip = new AnimationClip();
+        aClip.frameRate = FPS;
+
+        EditorCurveBinding spriteBinding = new EditorCurveBinding();
+        spriteBinding.type = typeof(SpriteRenderer);
+        spriteBinding.path = "";
+        spriteBinding.propertyName = "m_Sprite";
+
+        ObjectReferenceKeyframe[] spriteKeyFrames = new ObjectReferenceKeyframe[imagesForAnimation.Length];
+        
+        for (int i = 0; i<spriteKeyFrames.Length; i++)
+        {
+            spriteKeyFrames[i] = new ObjectReferenceKeyframe();
+            spriteKeyFrames[i].time = i * timeBetweenFrames;
+            spriteKeyFrames[i].value = imagesForAnimation[i];
+        }
+
+
+
+        //If the animation loops back on itself, assign keyframes that way
+        if (animationLoopsBack)
+        {
+            float timeDeltaBetweenFrames = Mathf.Abs(spriteKeyFrames[0].time - spriteKeyFrames[1].time);
+            int numberOfFramesToAdd = spriteKeyFrames.Length - 2;
+            //add all existing frames to a temporary list
+            List<ObjectReferenceKeyframe> tempFrames = new List<ObjectReferenceKeyframe>();
+            foreach (ObjectReferenceKeyframe oK in spriteKeyFrames)
+            {
+                tempFrames.Add(oK);
+            }
+
+            for (int i = 0; i < numberOfFramesToAdd; i++)
+            {
+                //working backwards from the end of the frames, add frames back one by one
+                tempFrames.Add(CopyKeyframe(spriteKeyFrames[spriteKeyFrames.Length - (i + 2)], spriteKeyFrames[spriteKeyFrames.Length - 1].time + ((i+1)*timeDeltaBetweenFrames)));
+            }
+
+            //slot the templist back into the keyframes
+            spriteKeyFrames = new ObjectReferenceKeyframe[tempFrames.Count];
+
+            for (int i =0; i<tempFrames.Count; i++)
+            {
+                spriteKeyFrames[i] = tempFrames[i];
+            }
+        }
+
+        AnimationUtility.SetObjectReferenceCurve(aClip, spriteBinding, spriteKeyFrames);
+
+        //for now, set all to loop, if an animation later on doesn't loop this will need to be expanded
+        AnimationClipSettings set = AnimationUtility.GetAnimationClipSettings(aClip);
+        set.loopTime = true;
+        AnimationUtility.SetAnimationClipSettings(aClip, set);
+
+        string fileName = "/" + animName + suffix;
+
+        string finalPath = saveFilePath + fileName;
+
+        AssetDatabase.CreateAsset(aClip, finalPath);
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+    }
+
+    private ObjectReferenceKeyframe CopyKeyframe(ObjectReferenceKeyframe original, float newTime)
+    {
+        ObjectReferenceKeyframe newKey = new ObjectReferenceKeyframe();
+        newKey.time = newTime;
+        newKey.value = original.value;
+        return newKey;
+    }
+}
+
+public class AnimationBuildData
+{
+    public Sprite[] imagesForAnimation;
+    public string fileName;
+    public float timeBetweenFrames;
+    public bool animationLoopsBack;
+}
+
+public static int[] spriteSheet1ImageCounts = new int[]
     {
         5, //walk front
         5, //walk back
@@ -202,169 +365,6 @@ public class AnimationBuilder : ScriptableObject
         .084f,
         .084f
     };
-
-    private string suffix = ".anim";
-
-    /// <summary>
-    /// This function is called by pressing a button once the files are assigned correctly in the inspector.
-    /// </summary>
-    public void BuildAnimationsFromAnimationSheets()
-    {
-        foreach (InfoToBuildAnimationsFromSheet info in infoToBuildFromSheets)
-        {
-            int[] imageCounts = new int[0];
-            bool[] loopBackBools = new bool[0];
-            float[] timesBetweenFrames = new float[0];
-            string[] fileTitles = new string[0];
-
-            //Assign the arrays based on which sheet we're pulling from
-            switch (info.sheetIdentity)
-            {
-                case SheetIdentity.SHEET1:
-                    imageCounts = AnimationBuilder.spriteSheet1ImageCounts;
-                    loopBackBools = AnimationBuilder.spriteSheet1LoopbackDatas;
-                    timesBetweenFrames = AnimationBuilder.spriteSheet1TimeBetweenFrames;
-                    fileTitles = AnimationBuilder.spriteSheet1AnimationTitles;
-                    break;
-
-                case SheetIdentity.SHEET2:
-                    imageCounts = AnimationBuilder.spriteSheet2ImageCounts;
-                    loopBackBools = AnimationBuilder.spriteSheet2LoopbackDatas;
-                    timesBetweenFrames = AnimationBuilder.spriteSheet2TimeBetweenFrames;
-                    fileTitles = AnimationBuilder.spriteSheet2AnimationTitles;
-                    break;
-            }
-
-            //Attach the file name prefix to the animation names
-            string[] tempFileTitles = new string[fileTitles.Length];
-            for (int s = 0; s < fileTitles.Length; s++)
-            {
-                tempFileTitles[s] = info.animationFilenamePrefix + fileTitles[s];
-            }
-
-            //Check to see if we have the right number of images, and return an error message if we don't
-            int totalImageCheck = 0;
-            foreach (int i in imageCounts)
-            {
-                totalImageCheck += i;
-            }
-            if (totalImageCheck != info.allSpritesFromSpriteSheet.Length)
-            {
-                Debug.LogWarning("The number of sprites entered into AnimationBuilder for " + info.sheetIdentity.ToString() + " does not match its expected value, animations cannot be built.");
-                Debug.LogWarning("The number of images found in the imageCounts variable: " + totalImageCheck.ToString());
-                Debug.LogWarning("The length of the images entered in the inspector: " + info.allSpritesFromSpriteSheet.Length.ToString());
-                return;
-            }
-
-            //set up a variable to count the number of images already used
-            int imagesAlreadyUsed = 0;
-
-            //Loop through each intended animation, and build it using the data we have set up
-            for (int i=0; i< imageCounts.Length; i++)
-            {
-                //initialize the necesarry variables
-                float timeBetweenFrames = timesBetweenFrames[i];
-                string animationName = tempFileTitles[i];
-                bool loopBack = loopBackBools[i];
-                int imageCount = imageCounts[i];
-                Sprite[] imagesForAnimation = new Sprite[imageCount];
-
-                //Assign the sprites
-                int tempIndex = 0;
-                int tempImagesUsed = imagesAlreadyUsed;
-                for (int x = imagesAlreadyUsed; x < (tempImagesUsed + imageCount); x++)
-                {
-                    imagesForAnimation[tempIndex] = info.allSpritesFromSpriteSheet[x];
-                    tempIndex++;
-                    imagesAlreadyUsed++;
-                }
-
-                //Build the animation
-                BuildAnimation(imagesForAnimation, timeBetweenFrames, animationName, saveFilePath, animationLoopsBack: loopBack);
-            }
-        }
-    }
-
-    public void BuildAnimation(Sprite[] imagesForAnimation,float timeBetweenFrames,string animName,string saveFilePath, bool animationLoopsBack = false)
-    {
-        AnimationClip aClip = new AnimationClip();
-        aClip.frameRate = FPS;
-
-        EditorCurveBinding spriteBinding = new EditorCurveBinding();
-        spriteBinding.type = typeof(SpriteRenderer);
-        spriteBinding.path = "";
-        spriteBinding.propertyName = "m_Sprite";
-
-        ObjectReferenceKeyframe[] spriteKeyFrames = new ObjectReferenceKeyframe[imagesForAnimation.Length];
-        
-        for (int i = 0; i<spriteKeyFrames.Length; i++)
-        {
-            spriteKeyFrames[i] = new ObjectReferenceKeyframe();
-            spriteKeyFrames[i].time = i * timeBetweenFrames;
-            spriteKeyFrames[i].value = imagesForAnimation[i];
-        }
-
-
-
-        //If the animation loops back on itself, assign keyframes that way
-        if (animationLoopsBack)
-        {
-            float timeDeltaBetweenFrames = Mathf.Abs(spriteKeyFrames[0].time - spriteKeyFrames[1].time);
-            int numberOfFramesToAdd = spriteKeyFrames.Length - 2;
-            //add all existing frames to a temporary list
-            List<ObjectReferenceKeyframe> tempFrames = new List<ObjectReferenceKeyframe>();
-            foreach (ObjectReferenceKeyframe oK in spriteKeyFrames)
-            {
-                tempFrames.Add(oK);
-            }
-
-            for (int i = 0; i < numberOfFramesToAdd; i++)
-            {
-                //working backwards from the end of the frames, add frames back one by one
-                tempFrames.Add(CopyKeyframe(spriteKeyFrames[spriteKeyFrames.Length - (i + 2)], spriteKeyFrames[spriteKeyFrames.Length - 1].time + ((i+1)*timeDeltaBetweenFrames)));
-            }
-
-            //slot the templist back into the keyframes
-            spriteKeyFrames = new ObjectReferenceKeyframe[tempFrames.Count];
-
-            for (int i =0; i<tempFrames.Count; i++)
-            {
-                spriteKeyFrames[i] = tempFrames[i];
-            }
-        }
-
-        AnimationUtility.SetObjectReferenceCurve(aClip, spriteBinding, spriteKeyFrames);
-
-        //for now, set all to loop, if an animation later on doesn't loop this will need to be expanded
-        AnimationClipSettings set = AnimationUtility.GetAnimationClipSettings(aClip);
-        set.loopTime = true;
-        AnimationUtility.SetAnimationClipSettings(aClip, set);
-
-        string fileName = "/" + animName + suffix;
-
-        string finalPath = saveFilePath + fileName;
-
-        AssetDatabase.CreateAsset(aClip, finalPath);
-        AssetDatabase.SaveAssets();
-        AssetDatabase.Refresh();
-    }
-
-    private ObjectReferenceKeyframe CopyKeyframe(ObjectReferenceKeyframe original, float newTime)
-    {
-        ObjectReferenceKeyframe newKey = new ObjectReferenceKeyframe();
-        newKey.time = newTime;
-        newKey.value = original.value;
-        return newKey;
-    }
-}
-
-public class AnimationBuildData
-{
-    public Sprite[] imagesForAnimation;
-    public string fileName;
-    public float timeBetweenFrames;
-    public bool animationLoopsBack;
-}
 
 [System.Serializable]
 public class InfoToBuildAnimationsFromSheet
